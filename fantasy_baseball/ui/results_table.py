@@ -26,6 +26,9 @@ def render_results_table(
     player_values: list[PlayerValue],
     config: LeagueConfig,
     warnings: list[str],
+    live_draft_enabled: bool = False,
+    live_dollar_values: dict[str, float] | None = None,
+    live_drafted_ids: set[str] | None = None,
 ) -> None:
     """Render the full results table with filters."""
 
@@ -37,19 +40,28 @@ def render_results_table(
         st.error("No player values computed. Check data sources and try again.")
         return
 
-    df = _build_dataframe(player_values, config)
+    df = _build_dataframe(player_values, config, live_draft_enabled, live_dollar_values, live_drafted_ids)
 
     st.subheader(f"Player Values — {config.name}")
-    _render_summary_metrics(player_values, config)
-    filtered_df = _render_filters(df, config)
-    _render_table(filtered_df, config)
+    _render_summary_metrics(player_values, config, live_draft_enabled, live_drafted_ids)
+    filtered_df = _render_filters(df, config, live_draft_enabled, live_drafted_ids)
+    _render_table(filtered_df, config, live_draft_enabled, live_dollar_values is not None)
     _render_download_button(filtered_df)
 
 
-def _build_dataframe(player_values: list[PlayerValue], config: LeagueConfig) -> pd.DataFrame:
+def _build_dataframe(
+    player_values: list[PlayerValue],
+    config: LeagueConfig,
+    live_draft_enabled: bool = False,
+    live_dollar_values: dict[str, float] | None = None,
+    live_drafted_ids: set[str] | None = None,
+) -> pd.DataFrame:
     """Convert PlayerValue list to a display DataFrame."""
+    drafted_ids = live_drafted_ids or set()
     rows = []
     for pv in player_values:
+        is_drafted = live_draft_enabled and pv.fg_id in drafted_ids
+        dollar_col = "Pre-draft $ Value" if live_draft_enabled else "$ Value"
         row: dict = {
             "Name": pv.name,
             "Team": pv.team,
@@ -57,11 +69,18 @@ def _build_dataframe(player_values: list[PlayerValue], config: LeagueConfig) -> 
             "Type": pv.player_type.capitalize(),
             "Assigned Slot": pv.assigned_position,
             "Total SGP": round(pv.total_sgp, 2),
-            "$ Value": pv.dollar_value,
+            dollar_col: pv.dollar_value,
             "Sources": ", ".join(sorted(pv.sources_available)),
             "Available": pv.is_available,
             "fg_id": pv.fg_id,
+            "_drafted": is_drafted,
         }
+
+        if live_draft_enabled and live_dollar_values is not None:
+            row["Live $ Value"] = live_dollar_values.get(pv.fg_id, pv.dollar_value)
+
+        if live_draft_enabled:
+            row["Draft Status"] = "✓ Drafted" if is_drafted else ""
 
         # Per-category SGP
         for cat, val in pv.category_sgp.items():
@@ -101,8 +120,14 @@ def _fmt_stat(val, stat: str):
     return round(float(val), 1)
 
 
-def _render_summary_metrics(player_values: list[PlayerValue], config: LeagueConfig) -> None:
+def _render_summary_metrics(
+    player_values: list[PlayerValue],
+    config: LeagueConfig,
+    live_draft_enabled: bool = False,
+    live_drafted_ids: set[str] | None = None,
+) -> None:
     """Show high-level summary stats above the table."""
+    drafted_ids = live_drafted_ids or set()
     total_players = len(player_values)
     available = sum(1 for pv in player_values if pv.is_available)
     kept = total_players - available
@@ -117,28 +142,50 @@ def _render_summary_metrics(player_values: list[PlayerValue], config: LeagueConf
     )
     available_dollars = total_budget - keeper_spend
 
-    c1, c2, c3, c4, c5, c6 = st.columns(6)
-    c1.metric("Total players", total_players)
-    c2.metric("Available", available)
-    c3.metric("Kept", kept)
-    c4.metric("Rostered hitters", f"{hitters} / {config.total_hitter_slots}")
-    c5.metric("Rostered pitchers", f"{pitchers} / {config.total_pitcher_slots}")
-    c6.metric("Available $", f"${available_dollars:,.0f}")
+    if live_draft_enabled and drafted_ids:
+        # Show remaining pool from session state (more accurate — uses actual prices)
+        picks = st.session_state.get("draft_picks", [])
+        total_draft_spent = sum(p["price"] for p in picks)
+        remaining_dollars = available_dollars - total_draft_spent
+        drafted_count = len(drafted_ids)
+        cols = st.columns(7)
+        cols[0].metric("Total players", total_players)
+        cols[1].metric("Available", available - drafted_count)
+        cols[2].metric("Kept", kept)
+        cols[3].metric("Drafted", drafted_count)
+        cols[4].metric("Rostered hitters", f"{hitters} / {config.total_hitter_slots}")
+        cols[5].metric("Rostered pitchers", f"{pitchers} / {config.total_pitcher_slots}")
+        cols[6].metric("Remaining $", f"${remaining_dollars:,.0f}")
+    else:
+        c1, c2, c3, c4, c5, c6 = st.columns(6)
+        c1.metric("Total players", total_players)
+        c2.metric("Available", available)
+        c3.metric("Kept", kept)
+        c4.metric("Rostered hitters", f"{hitters} / {config.total_hitter_slots}")
+        c5.metric("Rostered pitchers", f"{pitchers} / {config.total_pitcher_slots}")
+        c6.metric("Available $", f"${available_dollars:,.0f}")
 
 
-def _render_filters(df: pd.DataFrame, config: LeagueConfig) -> pd.DataFrame:
+def _render_filters(
+    df: pd.DataFrame,
+    config: LeagueConfig,
+    live_draft_enabled: bool = False,
+    live_drafted_ids: set[str] | None = None,
+) -> pd.DataFrame:
     """Render filter controls and return the filtered DataFrame."""
-    col1, col2, col3, col4, col5 = st.columns(5)
+    value_col = "Pre-draft $ Value" if live_draft_enabled else "$ Value"
 
-    with col1:
+    num_filter_cols = 6 if live_draft_enabled else 5
+    filter_cols = st.columns(num_filter_cols)
+
+    with filter_cols[0]:
         player_type = st.selectbox(
             "Player type",
             options=["All", "Hitters", "Pitchers"],
             key="filter_type",
         )
 
-    with col2:
-        # Collect all positions from the data
+    with filter_cols[1]:
         all_positions = sorted({
             pos
             for pos_str in df["Positions"].dropna()
@@ -151,14 +198,14 @@ def _render_filters(df: pd.DataFrame, config: LeagueConfig) -> pd.DataFrame:
             key="filter_pos",
         )
 
-    with col3:
+    with filter_cols[2]:
         availability = st.selectbox(
             "Availability",
             options=["Available only", "All", "Kept only"],
             key="filter_avail",
         )
 
-    with col4:
+    with filter_cols[3]:
         min_value = st.number_input(
             "Min $ value",
             min_value=1,
@@ -168,8 +215,14 @@ def _render_filters(df: pd.DataFrame, config: LeagueConfig) -> pd.DataFrame:
             key="filter_minval",
         )
 
-    with col5:
+    with filter_cols[4]:
         name_search = st.text_input("Search name", key="filter_name").strip().lower()
+
+    # Live draft: show/hide drafted toggle
+    show_drafted = True
+    if live_draft_enabled and live_drafted_ids:
+        with filter_cols[5]:
+            show_drafted = st.toggle("Show drafted", value=True, key="filter_show_drafted")
 
     # Apply filters
     filtered = df.copy()
@@ -187,27 +240,47 @@ def _render_filters(df: pd.DataFrame, config: LeagueConfig) -> pd.DataFrame:
     elif availability == "Kept only":
         filtered = filtered[filtered["Available"] == False]
 
-    filtered = filtered[filtered["$ Value"] >= min_value]
+    filtered = filtered[filtered[value_col] >= min_value]
 
     if name_search:
         filtered = filtered[filtered["Name"].str.lower().str.contains(name_search, na=False)]
 
+    if live_draft_enabled and not show_drafted:
+        filtered = filtered[filtered["_drafted"] == False]
+
+    # Sort drafted players to the bottom when showing them
+    if live_draft_enabled and show_drafted and "_drafted" in filtered.columns:
+        filtered = filtered.sort_values("_drafted", kind="stable")
+
     return filtered
 
 
-def _render_table(df: pd.DataFrame, config: LeagueConfig) -> None:
+def _render_table(
+    df: pd.DataFrame,
+    config: LeagueConfig,
+    live_draft_enabled: bool = False,
+    has_live_values: bool = False,
+) -> None:
     """Render the results DataFrame with appropriate column formatting."""
+    dollar_col = "Pre-draft $ Value" if live_draft_enabled else "$ Value"
 
     show_all = st.toggle("Show all columns", value=False, key="toggle_all_cols")
 
     if not show_all:
-        compact_cols = ["Name", "Team", "Positions", "$ Value", "Total SGP"]
+        compact_cols = ["Name", "Team", "Positions", dollar_col, "Total SGP"]
+        if live_draft_enabled and has_live_values:
+            compact_cols = ["Name", "Team", "Positions", dollar_col, "Live $ Value", "Total SGP"]
+        if live_draft_enabled:
+            compact_cols.append("Draft Status")
         display_cols = [c for c in compact_cols if c in df.columns]
     else:
-        # Build display column order — $ Value and Total SGP first for visibility
-        base_cols = ["Name", "Team", "Positions", "Type", "Assigned Slot", "$ Value", "Total SGP"]
+        base_cols = ["Name", "Team", "Positions", "Type", "Assigned Slot", dollar_col]
+        if live_draft_enabled and has_live_values:
+            base_cols.append("Live $ Value")
+        base_cols.append("Total SGP")
+        if live_draft_enabled:
+            base_cols.append("Draft Status")
 
-        # Stat columns depend on player type mix in filtered df
         has_hitters = "Hitter" in df["Type"].values
         has_pitchers = "Pitcher" in df["Type"].values
 
@@ -225,23 +298,31 @@ def _render_table(df: pd.DataFrame, config: LeagueConfig) -> None:
         display_cols = base_cols + stat_cols + sgp_cols + keeper_cols
         display_cols = [c for c in display_cols if c in df.columns]
 
-    display_df = df[display_cols].copy()
+    # Drop internal columns before display
+    display_df = df[[c for c in display_cols if c in df.columns]].copy()
     display_df.index = range(1, len(display_df) + 1)
+
+    if live_draft_enabled and not has_live_values and "Live $ Value" not in display_df.columns:
+        st.info("Log picks and hit **Recalculate Live Values** in the Live Pick Entry tab to see updated values.")
+
+    column_config = {
+        dollar_col: st.column_config.NumberColumn(dollar_col, format="$%.2f"),
+        "Total SGP": st.column_config.NumberColumn("Total SGP", format="%.2f"),
+        "Surplus": st.column_config.NumberColumn("Surplus", format="$%.2f"),
+        "Keeper $": st.column_config.NumberColumn("Keeper $", format="$%.0f"),
+        "OBP": st.column_config.NumberColumn("OBP", format="%.3f"),
+        "AVG": st.column_config.NumberColumn("AVG", format="%.3f"),
+        "ERA": st.column_config.NumberColumn("ERA", format="%.2f"),
+        "WHIP": st.column_config.NumberColumn("WHIP", format="%.3f"),
+    }
+    if live_draft_enabled and has_live_values:
+        column_config["Live $ Value"] = st.column_config.NumberColumn("Live $ Value", format="$%.2f")
 
     st.dataframe(
         display_df,
         use_container_width=True,
         height=1200,
-        column_config={
-            "$ Value": st.column_config.NumberColumn("$ Value", format="$%.2f"),
-            "Total SGP": st.column_config.NumberColumn("Total SGP", format="%.2f"),
-            "Surplus": st.column_config.NumberColumn("Surplus", format="$%.2f"),
-            "Keeper $": st.column_config.NumberColumn("Keeper $", format="$%.0f"),
-            "OBP": st.column_config.NumberColumn("OBP", format="%.3f"),
-            "AVG": st.column_config.NumberColumn("AVG", format="%.3f"),
-            "ERA": st.column_config.NumberColumn("ERA", format="%.2f"),
-            "WHIP": st.column_config.NumberColumn("WHIP", format="%.3f"),
-        },
+        column_config=column_config,
     )
 
     st.caption(f"Showing {len(display_df)} of {len(df)} players")
@@ -249,7 +330,9 @@ def _render_table(df: pd.DataFrame, config: LeagueConfig) -> None:
 
 def _render_download_button(df: pd.DataFrame) -> None:
     """Render a CSV download button for the filtered results."""
-    csv = df.to_csv(index=False).encode("utf-8")
+    _internal = {"Available", "fg_id", "_drafted"}
+    export_df = df.drop(columns=[c for c in _internal if c in df.columns])
+    csv = export_df.to_csv(index=False).encode("utf-8")
     st.download_button(
         label="Download filtered results as CSV",
         data=csv,

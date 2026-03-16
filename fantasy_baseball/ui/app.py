@@ -26,6 +26,7 @@ from .upload_handler import (
     render_sgp_override_form,
 )
 from .results_table import render_results_table
+from .live_draft import render_live_draft_tab
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -45,9 +46,17 @@ def main():
     config = render_config_editor()
 
     # ── Main tabs ───────────────────────────────────────────────────────────
-    tab_setup, tab_keepers, tab_values, tab_sgp = st.tabs(
-        ["Data & Setup", "Keepers", "Player Values", "SGP Breakdown"]
-    )
+    live_draft_enabled = st.session_state.get("live_draft_enabled", False)
+
+    if live_draft_enabled:
+        tab_setup, tab_keepers, tab_values, tab_live, tab_sgp = st.tabs(
+            ["Data & Setup", "Keepers", "Player Values", "Live Pick Entry", "SGP Breakdown"]
+        )
+    else:
+        tab_setup, tab_keepers, tab_values, tab_sgp = st.tabs(
+            ["Data & Setup", "Keepers", "Player Values", "SGP Breakdown"]
+        )
+        tab_live = None
 
     with tab_setup:
         _render_setup_tab(config)
@@ -57,6 +66,15 @@ def main():
 
     with tab_values:
         _render_values_tab(config)
+
+    if tab_live is not None:
+        with tab_live:
+            render_live_draft_tab(
+                player_values=st.session_state.get("player_values"),
+                config=config,
+                base_hitter_pool=st.session_state.get("hitter_pool", config.hitter_pool_dollars),
+                base_pitcher_pool=st.session_state.get("pitcher_pool", config.pitcher_pool_dollars),
+            )
 
     with tab_sgp:
         _render_sgp_tab()
@@ -104,6 +122,20 @@ def _render_setup_tab(config):
     bat_path, pit_path = render_pecota_upload()
     st.session_state["pecota_bat_path"] = bat_path
     st.session_state["pecota_pit_path"] = pit_path
+
+    st.divider()
+
+    # Live draft mode
+    st.subheader("Live Draft")
+    live_enabled = st.checkbox(
+        "Enable Live Pick Entry",
+        value=st.session_state.get("live_draft_enabled", False),
+        key="live_draft_enabled",
+        help="Adds a Live Pick Entry tab to log auction picks in real time and recalculate "
+             "remaining player values as dollars are spent.",
+    )
+    if live_enabled:
+        st.caption("Live Pick Entry tab is active. Log picks there after running the pipeline.")
 
     st.divider()
 
@@ -158,7 +190,15 @@ def _render_values_tab(config):
         return
 
     warnings = st.session_state.get("pipeline_warnings", [])
-    render_results_table(player_values, config, warnings)
+    live_draft_enabled = st.session_state.get("live_draft_enabled", False)
+    render_results_table(
+        player_values,
+        config,
+        warnings,
+        live_draft_enabled=live_draft_enabled,
+        live_dollar_values=st.session_state.get("live_dollar_values"),
+        live_drafted_ids=st.session_state.get("live_drafted_ids"),
+    )
 
 
 def _render_sgp_tab():
@@ -251,7 +291,12 @@ def _run_pipeline(config):
             st.session_state["denominators"] = result.denominators
             st.session_state["replacement_level"] = result.replacement_level
             st.session_state["consensus_projections"] = result.consensus_projections
+            st.session_state["hitter_pool"] = result.hitter_pool
+            st.session_state["pitcher_pool"] = result.pitcher_pool
             st.session_state["pipeline_warnings"] = result.warnings
+            # Clear any stale live values when pipeline reruns
+            st.session_state.pop("live_dollar_values", None)
+            st.session_state.pop("live_drafted_ids", None)
 
             st.success(
                 f"Done! Valued {len(result.player_values)} players. "

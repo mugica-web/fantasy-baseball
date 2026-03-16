@@ -81,6 +81,8 @@ class PipelineResult:
     denominators: SGPDenominators
     replacement_level: ReplacementLevel
     consensus_projections: list[ConsensusProjection]
+    hitter_pool: float = 0.0   # effective hitter dollar pool (after keeper deductions)
+    pitcher_pool: float = 0.0  # effective pitcher dollar pool (after keeper deductions)
     warnings: list[str] = field(default_factory=list)
 
 
@@ -294,6 +296,8 @@ def run_pipeline(inputs: PipelineInputs) -> PipelineResult:
         denominators=denominators,
         replacement_level=replacement_final,
         consensus_projections=consensus,
+        hitter_pool=hitter_pool_override if hitter_pool_override is not None else config.hitter_pool_dollars,
+        pitcher_pool=pitcher_pool_override if pitcher_pool_override is not None else config.pitcher_pool_dollars,
         warnings=warnings,
     )
 
