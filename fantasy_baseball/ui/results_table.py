@@ -28,6 +28,7 @@ def render_results_table(
     warnings: list[str],
     live_draft_enabled: bool = False,
     pre_keeper_dollar_values: dict[str, float] | None = None,
+    pre_keeper_total_sgp: dict[str, float] | None = None,
     live_dollar_values: dict[str, float] | None = None,
     live_drafted_ids: set[str] | None = None,
 ) -> None:
@@ -44,7 +45,8 @@ def render_results_table(
     has_keepers = pre_keeper_dollar_values is not None
     df = _build_dataframe(
         player_values, config,
-        live_draft_enabled, pre_keeper_dollar_values, live_dollar_values, live_drafted_ids,
+        live_draft_enabled, pre_keeper_dollar_values, pre_keeper_total_sgp,
+        live_dollar_values, live_drafted_ids,
     )
 
     st.subheader(f"Player Values — {config.name}")
@@ -59,6 +61,7 @@ def _build_dataframe(
     config: LeagueConfig,
     live_draft_enabled: bool = False,
     pre_keeper_dollar_values: dict[str, float] | None = None,
+    pre_keeper_total_sgp: dict[str, float] | None = None,
     live_dollar_values: dict[str, float] | None = None,
     live_drafted_ids: set[str] | None = None,
 ) -> pd.DataFrame:
@@ -67,6 +70,7 @@ def _build_dataframe(
     drafted_ids = live_drafted_ids or set()
     # Rename main pipeline output column when keepers or live mode are active
     dollar_col = "Pre-Draft $ Value" if (live_draft_enabled or has_keepers) else "$ Value"
+    sgp_col = "Pre-Draft SGP" if has_keepers else "Total SGP"
     show_status_col = live_draft_enabled or has_keepers
 
     rows = []
@@ -80,7 +84,7 @@ def _build_dataframe(
             "Positions": "/".join(pv.positions) if pv.positions else "DH",
             "Type": pv.player_type.capitalize(),
             "Assigned Slot": pv.assigned_position,
-            "Total SGP": round(pv.total_sgp, 2),
+            sgp_col: round(pv.total_sgp, 2),
             dollar_col: pv.dollar_value,
             "Sources": ", ".join(sorted(pv.sources_available)),
             "Available": pv.is_available,
@@ -90,6 +94,8 @@ def _build_dataframe(
 
         if has_keepers:
             row["Pre-Keeper $ Value"] = pre_keeper_dollar_values.get(pv.fg_id, pv.dollar_value)
+            if pre_keeper_total_sgp is not None:
+                row["Pre-Keeper SGP"] = round(pre_keeper_total_sgp.get(pv.fg_id, pv.total_sgp), 2)
 
         if live_dollar_values is not None:
             row["Live $ Value"] = live_dollar_values.get(pv.fg_id, pv.dollar_value)
@@ -283,6 +289,7 @@ def _render_table(
 ) -> None:
     """Render the results DataFrame with appropriate column formatting."""
     dollar_col = "Pre-Draft $ Value" if (live_draft_enabled or has_keepers) else "$ Value"
+    sgp_col = "Pre-Draft SGP" if has_keepers else "Total SGP"
     show_status_col = live_draft_enabled or has_keepers
 
     show_all = st.toggle("Show all columns", value=False, key="toggle_all_cols")
@@ -290,23 +297,22 @@ def _render_table(
     if not show_all:
         compact_cols = ["Name", "Team", "Positions"]
         if has_keepers:
-            compact_cols.append("Pre-Keeper $ Value")
+            compact_cols += ["Pre-Keeper $ Value", "Pre-Keeper SGP"]
         compact_cols.append(dollar_col)
+        compact_cols.append(sgp_col)
         if has_live_values:
             compact_cols.append("Live $ Value")
-        compact_cols.append("Total SGP")
         if show_status_col:
             compact_cols.append("Status")
         display_cols = [c for c in compact_cols if c in df.columns]
     else:
-        # Value columns in order: Pre-Keeper → Pre-Draft → Live → SGP → Status → Keeper $ → Surplus
+        # Value columns in order: Pre-Keeper $ → Pre-Keeper SGP → Pre-Draft $ → Pre-Draft SGP → Live $ → Status → Keeper $ → Surplus
         base_cols = ["Name", "Team", "Positions", "Type", "Assigned Slot"]
         if has_keepers:
-            base_cols.append("Pre-Keeper $ Value")
-        base_cols.append(dollar_col)
+            base_cols += ["Pre-Keeper $ Value", "Pre-Keeper SGP"]
+        base_cols += [dollar_col, sgp_col]
         if has_live_values:
             base_cols.append("Live $ Value")
-        base_cols.append("Total SGP")
         if show_status_col:
             base_cols.append("Status")
         # Keeper $ and Surplus right after Status
@@ -339,6 +345,8 @@ def _render_table(
         dollar_col: st.column_config.NumberColumn(dollar_col, format="$%.2f"),
         "Pre-Keeper $ Value": st.column_config.NumberColumn("Pre-Keeper $ Value", format="$%.2f"),
         "Live $ Value": st.column_config.NumberColumn("Live $ Value", format="$%.2f"),
+        "Pre-Draft SGP": st.column_config.NumberColumn("Pre-Draft SGP", format="%.2f"),
+        "Pre-Keeper SGP": st.column_config.NumberColumn("Pre-Keeper SGP", format="%.2f"),
         "Total SGP": st.column_config.NumberColumn("Total SGP", format="%.2f"),
         "Surplus": st.column_config.NumberColumn("Surplus", format="$%.2f"),
         "Keeper $": st.column_config.NumberColumn("Keeper $", format="$%.0f"),

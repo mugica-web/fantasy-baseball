@@ -11,6 +11,7 @@ Each function renders its own UI section and returns the parsed data
 
 from __future__ import annotations
 import io
+import json
 import tempfile
 import os
 
@@ -18,6 +19,24 @@ import pandas as pd
 import streamlit as st
 
 from ..valuation.keeper_logic import KeeperMode, KeeperEntry
+
+_KEEPERS_CACHE_FILE = os.path.join(os.path.dirname(__file__), "..", "..", "keepers_cache.json")
+
+
+def _load_keeper_cache() -> list[dict] | None:
+    try:
+        with open(_KEEPERS_CACHE_FILE) as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return None
+
+
+def _save_keeper_cache(rows: list[dict]) -> None:
+    try:
+        with open(_KEEPERS_CACHE_FILE, "w") as f:
+            json.dump(rows, f)
+    except Exception:
+        pass
 
 
 def render_standings_upload() -> pd.DataFrame | None:
@@ -133,7 +152,8 @@ def _render_manual_keeper_form(
     proj_by_label = {f"{p.name} ({p.team})": p for p in projections}
 
     if "keeper_rows" not in st.session_state:
-        st.session_state["keeper_rows"] = [{"label": _BLANK, "salary": 1}]
+        cached = _load_keeper_cache()
+        st.session_state["keeper_rows"] = cached if cached else [{"label": _BLANK, "salary": 1}]
 
     rows = st.session_state["keeper_rows"]
     # Migrate old-format rows (name/team text fields → label selectbox)
@@ -167,6 +187,9 @@ def _render_manual_keeper_form(
     if st.button("+ Add keeper"):
         rows.append({"label": _BLANK, "salary": 1})
         st.rerun()
+
+    # Persist current rows to disk so they survive browser refreshes
+    _save_keeper_cache(rows)
 
     # Build KeeperEntry objects directly — no fuzzy matching needed
     entries: list[KeeperEntry] = []

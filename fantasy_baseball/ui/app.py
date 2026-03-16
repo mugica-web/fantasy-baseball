@@ -197,6 +197,7 @@ def _render_values_tab(config):
         warnings,
         live_draft_enabled=live_draft_enabled,
         pre_keeper_dollar_values=st.session_state.get("pre_keeper_dollar_values"),
+        pre_keeper_total_sgp=st.session_state.get("pre_keeper_total_sgp"),
         live_dollar_values=st.session_state.get("live_dollar_values"),
         live_drafted_ids=st.session_state.get("live_drafted_ids"),
     )
@@ -295,6 +296,7 @@ def _run_pipeline(config):
             st.session_state["hitter_pool"] = result.hitter_pool
             st.session_state["pitcher_pool"] = result.pitcher_pool
             st.session_state["pre_keeper_dollar_values"] = result.pre_keeper_dollar_values
+            st.session_state["pre_keeper_total_sgp"] = result.pre_keeper_total_sgp
             st.session_state["pipeline_warnings"] = result.warnings
             # Clear any stale live values when pipeline reruns
             st.session_state.pop("live_dollar_values", None)
