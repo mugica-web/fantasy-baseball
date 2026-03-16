@@ -74,9 +74,9 @@ def compute_dollar_values(
     hitter_pool = hitter_pool_override if hitter_pool_override is not None else config.hitter_pool_dollars
     pitcher_pool = pitcher_pool_override if pitcher_pool_override is not None else config.pitcher_pool_dollars
 
-    # Floor: $1 per rostered slot (active + bench)
-    hitter_floor = config.num_teams * config.roster.total_hitter_slots
-    pitcher_floor = config.num_teams * config.roster.total_pitcher_slots
+    # Floor: $1 per rostered slot (active + effective bench — IL excluded)
+    hitter_floor = config.effective_total_hitter_slots
+    pitcher_floor = config.effective_total_pitcher_slots
 
     hitter_marginal = max(hitter_pool - hitter_floor, 0.0)
     pitcher_marginal = max(pitcher_pool - pitcher_floor, 0.0)
@@ -108,7 +108,7 @@ def compute_dollar_values(
                 consensus_stats=proj.stats.copy(),
                 category_sgp=cat_sgp,
                 total_sgp=total_sgp,
-                dollar_value=1.0,   # floor; overwritten below for rostered players
+                dollar_value=0.0,   # below-replacement players stay at $0
                 assigned_position=assigned_pos,
                 sources_available=list(proj.sources_available),
             )

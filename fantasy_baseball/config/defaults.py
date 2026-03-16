@@ -26,8 +26,9 @@ CNMFBL_CONFIG = LeagueConfig(
             "SP": 4,
             "RP": 1,
             "P": 2,
-            "BN": 7,  # includes 3 IL slots
-        }
+            "BN": 7,
+        },
+        il_slots=3,  # 3 of the 7 BN slots are IL — excluded from replacement level
     ),
     categories=ScoringCategories(
         hitting=["R", "HR", "RBI", "SB", "OBP"],

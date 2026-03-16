@@ -13,10 +13,15 @@ class RosterSlots:
       Flex hitter       : UTIL  (any hitter, including DH-only players)
       Dedicated SP/RP   : SP, RP
       Flex pitcher      : P     (SP or RP eligible)
-      Bench             : BN    (includes IL slots; included in replacement level pool)
+      Bench             : BN    (all bench slots including IL)
+
+    il_slots : how many of the BN slots are IL spots. IL players are parked
+        there injured and produce no stats, so they should NOT anchor
+        replacement level. Only (BN - IL) slots count for valuation depth.
     """
 
     slots: dict[str, int]
+    il_slots: int = 0  # IL slots within BN — excluded from replacement level
 
     # Class-level position sets — used by replacement_level module
     HITTER_POSITIONS: ClassVar[frozenset[str]] = frozenset(
@@ -56,13 +61,43 @@ class RosterSlots:
 
     @property
     def total_hitter_slots(self) -> int:
-        """Active hitter slots + bench hitter slots."""
+        """Active hitter slots + bench hitter slots (full roster including IL)."""
         return self.active_hitter_slots + self.bench_hitter_slots
 
     @property
     def total_pitcher_slots(self) -> int:
-        """Active pitcher slots + bench pitcher slots."""
+        """Active pitcher slots + bench pitcher slots (full roster including IL)."""
         return self.active_pitcher_slots + self.bench_pitcher_slots
+
+    # -- Effective slots (IL excluded) — used for replacement level and dollar valuation --
+
+    @property
+    def effective_bench_slots(self) -> int:
+        """Real playing bench slots, excluding IL spots."""
+        return max(0, self.bench_slots - self.il_slots)
+
+    @property
+    def effective_bench_hitter_slots(self) -> int:
+        """Effective bench slots allocated to hitters (same active ratio, IL excluded)."""
+        total_active = self.active_hitter_slots + self.active_pitcher_slots
+        if total_active == 0:
+            return self.effective_bench_slots // 2
+        return round(self.effective_bench_slots * self.active_hitter_slots / total_active)
+
+    @property
+    def effective_bench_pitcher_slots(self) -> int:
+        """Effective bench slots allocated to pitchers (IL excluded)."""
+        return self.effective_bench_slots - self.effective_bench_hitter_slots
+
+    @property
+    def effective_total_hitter_slots(self) -> int:
+        """Active hitter slots + effective bench hitter slots (IL excluded)."""
+        return self.active_hitter_slots + self.effective_bench_hitter_slots
+
+    @property
+    def effective_total_pitcher_slots(self) -> int:
+        """Active pitcher slots + effective bench pitcher slots (IL excluded)."""
+        return self.active_pitcher_slots + self.effective_bench_pitcher_slots
 
     @property
     def dedicated_hitter_slots(self) -> dict[str, int]:
@@ -150,10 +185,20 @@ class LeagueConfig:
 
     @property
     def total_hitter_slots(self) -> int:
-        """Total hitter roster slots across all teams (active + bench)."""
+        """Total hitter roster slots across all teams (active + full bench including IL)."""
         return self.num_teams * self.roster.total_hitter_slots
 
     @property
     def total_pitcher_slots(self) -> int:
-        """Total pitcher roster slots across all teams (active + bench)."""
+        """Total pitcher roster slots across all teams (active + full bench including IL)."""
         return self.num_teams * self.roster.total_pitcher_slots
+
+    @property
+    def effective_total_hitter_slots(self) -> int:
+        """Total hitter slots for valuation — IL excluded from bench count."""
+        return self.num_teams * self.roster.effective_total_hitter_slots
+
+    @property
+    def effective_total_pitcher_slots(self) -> int:
+        """Total pitcher slots for valuation — IL excluded from bench count."""
+        return self.num_teams * self.roster.effective_total_pitcher_slots

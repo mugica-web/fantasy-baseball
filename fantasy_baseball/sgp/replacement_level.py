@@ -145,18 +145,14 @@ def compute_replacement_level(
         last_rostered = assigned[-1]
         by_position[pos] = last_rostered.stats.copy()
 
-    # Phase 3: bench — extend the rostered pool by BN slots.
-    # Bench is split proportionally between hitters and pitchers based on the
-    # active hitter/pitcher slot ratio (e.g. 10 active hitter slots vs 7 pitcher
-    # slots → bench is roughly 59% hitters, 41% pitchers).
+    # Phase 3: bench — extend the rostered pool by effective BN slots (IL excluded).
+    # IL slots hold injured players who produce no stats and should not anchor
+    # replacement level. Only real bench spots count toward pool depth.
     n = config.num_teams
-    bench_needed = config.roster.bench_slots * n
+    bench_needed = config.roster.effective_bench_slots * n
     if bench_needed > 0:
-        active_h = config.roster.active_hitter_slots
-        active_p = config.roster.active_pitcher_slots
-        total_active = active_h + active_p
-        hitter_bench_count = round(bench_needed * active_h / total_active) if total_active else bench_needed // 2
-        pitcher_bench_count = bench_needed - hitter_bench_count
+        hitter_bench_count = config.roster.effective_bench_hitter_slots * n
+        pitcher_bench_count = config.roster.effective_bench_pitcher_slots * n
 
         active_hitter_ids = {p.fg_id for p in rostered_hitters}
         active_pitcher_ids = {p.fg_id for p in rostered_pitchers}
