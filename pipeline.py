@@ -83,6 +83,7 @@ class PipelineResult:
     consensus_projections: list[ConsensusProjection]
     hitter_pool: float = 0.0   # effective hitter dollar pool (after keeper deductions)
     pitcher_pool: float = 0.0  # effective pitcher dollar pool (after keeper deductions)
+    pre_keeper_dollar_values: dict[str, float] | None = None  # {fg_id: $} before keeper adjustments
     warnings: list[str] = field(default_factory=list)
 
 
@@ -226,6 +227,7 @@ def run_pipeline(inputs: PipelineInputs) -> PipelineResult:
     hitter_pool_override = None
     pitcher_pool_override = None
     preliminary_values = None  # only set when keepers are active
+    pre_keeper_dollar_values = None  # only set when keepers are active
 
     if inputs.keeper_mode != KeeperMode.NONE and inputs.confirmed_keepers:
         logger.info("=== Step 10: Applying keeper adjustments ===")
@@ -236,6 +238,9 @@ def run_pipeline(inputs: PipelineInputs) -> PipelineResult:
             category_sgp_map=cat_sgp_final,
             position_assignments=pos_assignments_final,
         )
+        # Snapshot pre-keeper dollar values for display in the UI
+        pre_keeper_dollar_values = {pv.fg_id: pv.dollar_value for pv in preliminary_values}
+
         available_consensus, hitter_pool_override, pitcher_pool_override = apply_keeper_adjustments(
             config=config,
             projections=consensus,
@@ -298,6 +303,7 @@ def run_pipeline(inputs: PipelineInputs) -> PipelineResult:
         consensus_projections=consensus,
         hitter_pool=hitter_pool_override if hitter_pool_override is not None else config.hitter_pool_dollars,
         pitcher_pool=pitcher_pool_override if pitcher_pool_override is not None else config.pitcher_pool_dollars,
+        pre_keeper_dollar_values=pre_keeper_dollar_values,
         warnings=warnings,
     )
 

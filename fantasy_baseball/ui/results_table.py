@@ -27,6 +27,7 @@ def render_results_table(
     config: LeagueConfig,
     warnings: list[str],
     live_draft_enabled: bool = False,
+    pre_keeper_dollar_values: dict[str, float] | None = None,
     live_dollar_values: dict[str, float] | None = None,
     live_drafted_ids: set[str] | None = None,
 ) -> None:
@@ -40,12 +41,16 @@ def render_results_table(
         st.error("No player values computed. Check data sources and try again.")
         return
 
-    df = _build_dataframe(player_values, config, live_draft_enabled, live_dollar_values, live_drafted_ids)
+    has_keepers = pre_keeper_dollar_values is not None
+    df = _build_dataframe(
+        player_values, config,
+        live_draft_enabled, pre_keeper_dollar_values, live_dollar_values, live_drafted_ids,
+    )
 
     st.subheader(f"Player Values — {config.name}")
     _render_summary_metrics(player_values, config, live_draft_enabled, live_drafted_ids)
-    filtered_df = _render_filters(df, config, live_draft_enabled, live_drafted_ids)
-    _render_table(filtered_df, config, live_draft_enabled, live_dollar_values is not None)
+    filtered_df = _render_filters(df, config, live_draft_enabled, has_keepers, live_drafted_ids)
+    _render_table(filtered_df, config, live_draft_enabled, has_keepers, live_dollar_values is not None)
     _render_download_button(filtered_df)
 
 
@@ -53,15 +58,22 @@ def _build_dataframe(
     player_values: list[PlayerValue],
     config: LeagueConfig,
     live_draft_enabled: bool = False,
+    pre_keeper_dollar_values: dict[str, float] | None = None,
     live_dollar_values: dict[str, float] | None = None,
     live_drafted_ids: set[str] | None = None,
 ) -> pd.DataFrame:
     """Convert PlayerValue list to a display DataFrame."""
+    has_keepers = pre_keeper_dollar_values is not None
     drafted_ids = live_drafted_ids or set()
+    # Rename main pipeline output column when keepers or live mode are active
+    dollar_col = "Pre-Draft $ Value" if (live_draft_enabled or has_keepers) else "$ Value"
+    show_status_col = live_draft_enabled or has_keepers
+
     rows = []
     for pv in player_values:
         is_drafted = live_draft_enabled and pv.fg_id in drafted_ids
-        dollar_col = "Pre-draft $ Value" if live_draft_enabled else "$ Value"
+        is_kept = pv.keeper_status is not None and pv.keeper_status.is_confirmed_keeper
+
         row: dict = {
             "Name": pv.name,
             "Team": pv.team,
@@ -76,11 +88,19 @@ def _build_dataframe(
             "_drafted": is_drafted,
         }
 
-        if live_draft_enabled and live_dollar_values is not None:
+        if has_keepers:
+            row["Pre-Keeper $ Value"] = pre_keeper_dollar_values.get(pv.fg_id, pv.dollar_value)
+
+        if live_dollar_values is not None:
             row["Live $ Value"] = live_dollar_values.get(pv.fg_id, pv.dollar_value)
 
-        if live_draft_enabled:
-            row["Draft Status"] = "✓ Drafted" if is_drafted else ""
+        if show_status_col:
+            if is_kept:
+                row["Status"] = "✓ Kept"
+            elif is_drafted:
+                row["Status"] = "✓ Drafted"
+            else:
+                row["Status"] = ""
 
         # Per-category SGP
         for cat, val in pv.category_sgp.items():
@@ -95,16 +115,14 @@ def _build_dataframe(
             for stat in ["IP", "W", "SV", "K", "ERA", "WHIP"]:
                 row[stat] = _fmt_stat(stats.get(stat), stat)
 
-        # Keeper info
+        # Keeper salary / surplus (only relevant when keeper mode is active)
         if pv.keeper_status is not None:
             ks = pv.keeper_status
             row["Keeper $"] = ks.salary
             row["Surplus"] = round(ks.surplus, 2)
-            row["Keeper"] = "✓ Kept" if ks.is_confirmed_keeper else ""
         else:
             row["Keeper $"] = None
             row["Surplus"] = None
-            row["Keeper"] = ""
 
         rows.append(row)
 
@@ -170,10 +188,11 @@ def _render_filters(
     df: pd.DataFrame,
     config: LeagueConfig,
     live_draft_enabled: bool = False,
+    has_keepers: bool = False,
     live_drafted_ids: set[str] | None = None,
 ) -> pd.DataFrame:
     """Render filter controls and return the filtered DataFrame."""
-    value_col = "Pre-draft $ Value" if live_draft_enabled else "$ Value"
+    value_col = "Pre-Draft $ Value" if (live_draft_enabled or has_keepers) else "$ Value"
 
     num_filter_cols = 6 if live_draft_enabled else 5
     filter_cols = st.columns(num_filter_cols)
@@ -259,27 +278,39 @@ def _render_table(
     df: pd.DataFrame,
     config: LeagueConfig,
     live_draft_enabled: bool = False,
+    has_keepers: bool = False,
     has_live_values: bool = False,
 ) -> None:
     """Render the results DataFrame with appropriate column formatting."""
-    dollar_col = "Pre-draft $ Value" if live_draft_enabled else "$ Value"
+    dollar_col = "Pre-Draft $ Value" if (live_draft_enabled or has_keepers) else "$ Value"
+    show_status_col = live_draft_enabled or has_keepers
 
     show_all = st.toggle("Show all columns", value=False, key="toggle_all_cols")
 
     if not show_all:
-        compact_cols = ["Name", "Team", "Positions", dollar_col, "Total SGP"]
-        if live_draft_enabled and has_live_values:
-            compact_cols = ["Name", "Team", "Positions", dollar_col, "Live $ Value", "Total SGP"]
-        if live_draft_enabled:
-            compact_cols.append("Draft Status")
+        compact_cols = ["Name", "Team", "Positions"]
+        if has_keepers:
+            compact_cols.append("Pre-Keeper $ Value")
+        compact_cols.append(dollar_col)
+        if has_live_values:
+            compact_cols.append("Live $ Value")
+        compact_cols.append("Total SGP")
+        if show_status_col:
+            compact_cols.append("Status")
         display_cols = [c for c in compact_cols if c in df.columns]
     else:
-        base_cols = ["Name", "Team", "Positions", "Type", "Assigned Slot", dollar_col]
-        if live_draft_enabled and has_live_values:
+        # Value columns in order: Pre-Keeper → Pre-Draft → Live → SGP → Status → Keeper $ → Surplus
+        base_cols = ["Name", "Team", "Positions", "Type", "Assigned Slot"]
+        if has_keepers:
+            base_cols.append("Pre-Keeper $ Value")
+        base_cols.append(dollar_col)
+        if has_live_values:
             base_cols.append("Live $ Value")
         base_cols.append("Total SGP")
-        if live_draft_enabled:
-            base_cols.append("Draft Status")
+        if show_status_col:
+            base_cols.append("Status")
+        # Keeper $ and Surplus right after Status
+        base_cols += [c for c in ["Keeper $", "Surplus"] if c in df.columns]
 
         has_hitters = "Hitter" in df["Type"].values
         has_pitchers = "Pitcher" in df["Type"].values
@@ -293,20 +324,21 @@ def _render_table(
             stat_cols = [c for c in ["PA", "R", "HR", "RBI", "SB", "OBP", "IP", "W", "SV", "K", "ERA", "WHIP"] if c in df.columns]
 
         sgp_cols = sorted([c for c in df.columns if c.startswith("SGP_")])
-        keeper_cols = [c for c in ["Keeper", "Keeper $", "Surplus"] if c in df.columns]
 
-        display_cols = base_cols + stat_cols + sgp_cols + keeper_cols
+        display_cols = base_cols + stat_cols + sgp_cols
         display_cols = [c for c in display_cols if c in df.columns]
 
     # Drop internal columns before display
     display_df = df[[c for c in display_cols if c in df.columns]].copy()
     display_df.index = range(1, len(display_df) + 1)
 
-    if live_draft_enabled and not has_live_values and "Live $ Value" not in display_df.columns:
+    if live_draft_enabled and not has_live_values:
         st.info("Log picks and hit **Recalculate Live Values** in the Live Pick Entry tab to see updated values.")
 
     column_config = {
         dollar_col: st.column_config.NumberColumn(dollar_col, format="$%.2f"),
+        "Pre-Keeper $ Value": st.column_config.NumberColumn("Pre-Keeper $ Value", format="$%.2f"),
+        "Live $ Value": st.column_config.NumberColumn("Live $ Value", format="$%.2f"),
         "Total SGP": st.column_config.NumberColumn("Total SGP", format="%.2f"),
         "Surplus": st.column_config.NumberColumn("Surplus", format="$%.2f"),
         "Keeper $": st.column_config.NumberColumn("Keeper $", format="$%.0f"),
@@ -315,8 +347,6 @@ def _render_table(
         "ERA": st.column_config.NumberColumn("ERA", format="%.2f"),
         "WHIP": st.column_config.NumberColumn("WHIP", format="%.3f"),
     }
-    if live_draft_enabled and has_live_values:
-        column_config["Live $ Value"] = st.column_config.NumberColumn("Live $ Value", format="$%.2f")
 
     st.dataframe(
         display_df,
