@@ -248,22 +248,13 @@ def run_pipeline(inputs: PipelineInputs) -> PipelineResult:
             confirmed_keepers=inputs.confirmed_keepers,
         )
 
-        # Recompute replacement level and SGP for the reduced pool
-        replacement_final = compute_replacement_level(
-            config=config,
-            projections=available_consensus,
-            initial_sgp_values=full_sgp_final,
-        )
-        _, cat_sgp_final, pos_assignments_final = _compute_full_sgp(
-            available_consensus, replacement_final, denominators, config
-        )
-
-        # Re-add kept players' SGP and positions from the pre-keeper pass
-        # (they don't need recalculation — their value is fixed at their salary)
-        for p in consensus:
-            if p.fg_id not in cat_sgp_final:
-                cat_sgp_final[p.fg_id] = cat_sgp_pass2.get(p.fg_id, {})
-                pos_assignments_final[p.fg_id] = pos_assignments_pass2.get(p.fg_id, "BN")
+        # SGP is NOT recomputed after keeper removal. Replacement level and individual
+        # SGP values reflect the full league — keepers occupy roster spots but don't
+        # change the replacement standard. Recomputing SGP after removal lowers the
+        # replacement baseline, inflating total SGP pool-wide and incorrectly diluting
+        # each remaining player's share of a smaller dollar pool, causing values to drop.
+        # Using pre-keeper SGP ensures available players correctly benefit from reduced
+        # pool competition: fewer dollars, fewer players, same SGP distribution.
 
     # ─── Step 11: Dollar conversion ────────────────────────────────────────────
     logger.info("=== Step 11: Converting to dollar values ===")
