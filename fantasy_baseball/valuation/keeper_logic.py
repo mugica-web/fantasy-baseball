@@ -244,13 +244,17 @@ def apply_keeper_adjustments(
 
     hitter_keeper_spend = 0.0
     pitcher_keeper_spend = 0.0
+    num_hitter_keepers = 0
+    num_pitcher_keepers = 0
 
     for keeper in confirmed_keepers:
         player_type = type_by_id.get(keeper.fg_id, "hitter")
         if player_type == "hitter":
             hitter_keeper_spend += keeper.salary
+            num_hitter_keepers += 1
         else:
             pitcher_keeper_spend += keeper.salary
+            num_pitcher_keepers += 1
 
     # Attach KeeperStatus to kept PlayerValue objects
     for pv in player_values:
@@ -268,8 +272,13 @@ def apply_keeper_adjustments(
     # Remove keepers from pool
     available = [p for p in projections if p.fg_id not in keeper_ids]
 
-    adjusted_hitter_pool = config.hitter_pool_dollars - hitter_keeper_spend
-    adjusted_pitcher_pool = config.pitcher_pool_dollars - pitcher_keeper_spend
+    # Add back $1 per keeper slot — each keeper fills a slot that would have required
+    # a $1 minimum bid at auction, so the net pool reduction is (salary - $1), not salary.
+    # Without this, the floor stays at the full league count even though keeper slots are
+    # no longer auctioned, causing the marginal to be understated and available-player
+    # values to drop even for genuinely undervalued keepers.
+    adjusted_hitter_pool = config.hitter_pool_dollars - hitter_keeper_spend + num_hitter_keepers
+    adjusted_pitcher_pool = config.pitcher_pool_dollars - pitcher_keeper_spend + num_pitcher_keepers
 
     logger.info(
         "Keepers: %d players removed. Hitter pool: $%.0f → $%.0f. Pitcher pool: $%.0f → $%.0f",
