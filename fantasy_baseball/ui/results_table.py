@@ -227,7 +227,7 @@ def _render_filters(
     with filter_cols[3]:
         min_value = st.number_input(
             "Min $ value",
-            min_value=1,
+            min_value=0,
             max_value=100,
             value=1,
             step=1,
