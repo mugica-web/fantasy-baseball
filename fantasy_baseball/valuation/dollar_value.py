@@ -5,12 +5,14 @@ Algorithm:
   1. Split players into hitter and pitcher pools.
   2. Include all rostered players (active + bench) sorted by SGP descending,
      capped to effective_total slots.
-  3. Assign a participation weight to each player:
-       - Active-slot players (top active_slots by SGP): weight = 1.0
-       - Bench players: weight decays linearly from a type-specific maximum
-         down to a minimum as bench depth increases.
-         Pitchers decay from 0.65 → 0.20 (streamable by matchup).
-         Hitters decay from 0.40 → 0.05 (spot-starts / injury fill-ins).
+  3. Assign a participation weight to each player via a single smooth linear
+     decay from best starter to deepest bench player:
+       - Active players: decay from 1.0 (rank 1) down to the type-specific
+         top-of-bench rate at the last active slot.
+       - Bench players: continue the decay from the top-of-bench rate down
+         to the bottom-of-bench rate.
+       Pitchers: 1.0 → 0.65 (active) → 0.20 (bench) — more streamable.
+       Hitters:  1.0 → 0.40 (active) → 0.05 (bench) — spot starts only.
   4. Weighted floor = Σ weight_i  (replaces the old integer slot count)
   5. Marginal pool = total_pool - weighted_floor
   6. Each player's dollar value = weight_i + (sgp_i × weight_i / Σ(sgp_j × weight_j)) × marginal
@@ -162,24 +164,34 @@ def _participation_weights(
     """
     Compute participation weights for a sorted (best→worst) player list.
 
-    Active players (rank < active_cutoff) get weight 1.0.
-    Bench players get a linearly decaying weight based on depth and type.
+    A single smooth linear decay runs from rank 0 to the last bench player:
+      - Active range (rank 0 → active_cutoff-1):
+          1.0 (best starter) → bench_top (worst active = first bench level)
+      - Bench range (rank active_cutoff → end):
+          bench_top → bench_bottom
+
+    This removes the hard cliff between the last active starter and the first
+    bench player — both sit at bench_top weight, reflecting that the
+    difference between the 10th active hitter and the 1st bench hitter is
+    about as meaningful as the difference within the active group.
     """
-    bench_players = rostered_players[active_cutoff:]
-    bench_size = len(bench_players)
+    bench_size = len(rostered_players) - active_cutoff
 
     weights: dict[str, float] = {}
     for rank, pv in enumerate(rostered_players):
+        bench_top, bench_bottom = (
+            _BENCH_PITCHER_UTILIZATION if pv.player_type == "pitcher"
+            else _BENCH_HITTER_UTILIZATION
+        )
         if rank < active_cutoff:
-            weights[pv.fg_id] = 1.0
+            # Active: decay from 1.0 → bench_top across active depth
+            frac = rank / max(active_cutoff - 1, 1)
+            weights[pv.fg_id] = round(1.0 + frac * (bench_top - 1.0), 4)
         else:
+            # Bench: decay from bench_top → bench_bottom
             bench_rank = rank - active_cutoff
-            top, bottom = (
-                _BENCH_PITCHER_UTILIZATION if pv.player_type == "pitcher"
-                else _BENCH_HITTER_UTILIZATION
-            )
-            frac = bench_rank / max(bench_size - 1, 1)  # 0.0 → 1.0 across bench depth
-            weights[pv.fg_id] = round(top + frac * (bottom - top), 4)
+            frac = bench_rank / max(bench_size - 1, 1)
+            weights[pv.fg_id] = round(bench_top + frac * (bench_bottom - bench_top), 4)
 
     return weights
 
