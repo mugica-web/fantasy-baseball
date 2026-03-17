@@ -25,7 +25,11 @@ A Streamlit app at `/home/mugica/projects/fantasy-baseball/` that computes SGP-b
 9. **Manual keeper form used fuzzy matching** — replaced text inputs with a searchable selectbox populated from the projection pool; `fg_id` resolved directly, no fuzzy matching.
 10. **SGP denominator overrides not updating when historical standings loaded** — Streamlit only honors `value=` on first widget render. Fixed with a fingerprint check in `render_sgp_override_form()` that force-writes session state keys when denominators change.
 11. **Pre-draft values lower than pre-keeper values after adding keepers** — pipeline was recomputing replacement level and SGP after removing keepers, which lowered the baseline and inflated total SGP pool-wide, diluting each player's share. Fix: keep pre-keeper `cat_sgp_final` unchanged after keeper removal; only the dollar pools change.
-12. **Bench players overvalued due to IL slots in replacement level** — `RosterSlots` now has `il_slots` field; replacement level and dollar floor use `effective_bench_slots` (BN minus IL) so IL-parked players don't anchor replacement. CNMFBL set to `il_slots=3`.
+12. **Bench players overvalued due to IL slots in replacement level** — `RosterSlots` now has `il_slots` field; `effective_bench_slots` = BN minus IL so IL-parked players don't anchor replacement. CNMFBL uses `il_slots=0` — IL is a completely separate roster slot in that league, not part of the 7 BN spots.
+13. **`config_editor.py` silently zeroing `il_slots` on every render** — `_render_form` was rebuilding `RosterSlots` without carrying over `il_slots`, so any value set in `defaults.py` was wiped on the first Streamlit rerun. Fixed by passing `il_slots=cfg.roster.il_slots` when constructing the new `RosterSlots`.
+14. **SGP Pool Diagnostics expander not appearing on reload** — was gated on `pre_keeper_total_sgp is not None`. Fixed to always render the expander once the pipeline has run; shows 2-metric view without keepers, 4-metric view with.
+15. **Roster slot metrics showing total slots instead of remaining after keepers** — renamed to "Auction hitter/pitcher slots" and now show active slots minus confirmed keeper count.
+16. **Position-specific replacement overvaluing UTIL-only players** — attempted per-position baselines for dedicated slots (C, 1B, etc.) while keeping UTIL at pool-level. Created asymmetry: Ohtani/Greene measured against weaker pool-level bar, so UTIL > dedicated-position players of equivalent stats. Reverted via `git revert`.
 
 ## Features Added
 
@@ -39,6 +43,14 @@ A Streamlit app at `/home/mugica/projects/fantasy-baseball/` that computes SGP-b
 - **Status column**: shows "✓ Kept" / "✓ Drafted" / blank; Keeper $ and Surplus moved next to Status in full column view.
 - **$0 floor for below-replacement players**: players at or below replacement SGP now valued at $0 instead of $1.
 - **IL slots excluded from replacement level**: `RosterSlots.il_slots` field separates IL bench spots from real bench spots for replacement level and dollar floor calculations.
+- **Standings CSV + player pool size persistence**: uploaded historical standings saved to `standings_cache.csv`; player pool size saved to `settings_cache.json`. Both reload automatically on page refresh with a "Clear" button to reset.
+- **Bench participation weights (sliding-scale dollar distribution)**: bench players receive discounted participation weights reflecting their lower expected stat contribution. A single smooth linear decay runs from best starter to deepest bench:
+  - Pitchers: 1.0 (best active SP) → 0.65 (last active slot) → 0.20 (last bench pitcher). Higher because pitchers can be streamed by matchup.
+  - Hitters: 1.0 (best active hitter) → 0.40 (last active slot) → 0.05 (last bench hitter). Lower because bench hitters are spot-starts/injury fill-ins only.
+  - No cliff at the active/bench boundary — last active and first bench share the same weight.
+  - Dollar formula: `value_i = weight_i + (sgp_i × weight_i / Σ sgp_j×weight_j) × marginal`. Sum always equals pool exactly.
+  - `keeper_logic.apply_keeper_adjustments` returns a 7-tuple: available projections, adjusted pools, effective-total slot overrides (pool cap), and active slot overrides (bench threshold).
+  - `LeagueConfig` gained `active_hitter_slots` and `active_pitcher_slots` properties (league-wide active only, no bench).
 
 ## Web Deployment Status
 
