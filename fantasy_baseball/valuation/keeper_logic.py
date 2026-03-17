@@ -272,19 +272,20 @@ def apply_keeper_adjustments(
     # Remove keepers from pool
     available = [p for p in projections if p.fg_id not in keeper_ids]
 
-    # Add back $1 per keeper slot — each keeper fills a slot that would have required
-    # a $1 minimum bid at auction, so the net pool reduction is (salary - $1), not salary.
-    # Without this, the floor stays at the full league count even though keeper slots are
-    # no longer auctioned, causing the marginal to be understated and available-player
-    # values to drop even for genuinely undervalued keepers.
-    adjusted_hitter_pool = config.hitter_pool_dollars - hitter_keeper_spend + num_hitter_keepers
-    adjusted_pitcher_pool = config.pitcher_pool_dollars - pitcher_keeper_spend + num_pitcher_keepers
+    adjusted_hitter_pool = config.hitter_pool_dollars - hitter_keeper_spend
+    adjusted_pitcher_pool = config.pitcher_pool_dollars - pitcher_keeper_spend
+
+    # Remaining auction slots: keeper slots are filled; only unfilled slots are auctioned.
+    # Passed to compute_dollar_values so the floor and player cap are both correct.
+    hitter_slots_remaining = config.effective_total_hitter_slots - num_hitter_keepers
+    pitcher_slots_remaining = config.effective_total_pitcher_slots - num_pitcher_keepers
 
     logger.info(
-        "Keepers: %d players removed. Hitter pool: $%.0f → $%.0f. Pitcher pool: $%.0f → $%.0f",
+        "Keepers: %d players removed. Hitter pool: $%.0f → $%.0f (%d slots). "
+        "Pitcher pool: $%.0f → $%.0f (%d slots)",
         len(keeper_ids),
-        config.hitter_pool_dollars, adjusted_hitter_pool,
-        config.pitcher_pool_dollars, adjusted_pitcher_pool,
+        config.hitter_pool_dollars, adjusted_hitter_pool, hitter_slots_remaining,
+        config.pitcher_pool_dollars, adjusted_pitcher_pool, pitcher_slots_remaining,
     )
 
-    return available, adjusted_hitter_pool, adjusted_pitcher_pool
+    return available, adjusted_hitter_pool, adjusted_pitcher_pool, hitter_slots_remaining, pitcher_slots_remaining

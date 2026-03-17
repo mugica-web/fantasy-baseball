@@ -62,35 +62,29 @@ def compute_dollar_values(
     position_assignments: dict[str, str],   # {fg_id: assigned_position}
     hitter_pool_override: float | None = None,
     pitcher_pool_override: float | None = None,
+    hitter_slots_override: int | None = None,
+    pitcher_slots_override: int | None = None,
 ) -> list[PlayerValue]:
     """
     Convert per-player SGP contributions to auction dollar values.
 
-    category_sgp_map    : {fg_id: {category: sgp}} from the SGP calculation pass
-    position_assignments: {fg_id: assigned_position} from replacement level
-    hitter_pool_override: use when keeper salaries have been subtracted (keeper mode)
+    category_sgp_map     : {fg_id: {category: sgp}} from the SGP calculation pass
+    position_assignments : {fg_id: assigned_position} from replacement level
+    hitter_pool_override : use when keeper salaries have been subtracted (keeper mode)
     pitcher_pool_override: same for pitchers
+    hitter_slots_override: remaining hitter auction slots after keeper slots are filled;
+                           caps the positive-SGP pool so total distributed = pool exactly
+    pitcher_slots_override: same for pitchers
     """
     hitter_pool = hitter_pool_override if hitter_pool_override is not None else config.hitter_pool_dollars
     pitcher_pool = pitcher_pool_override if pitcher_pool_override is not None else config.pitcher_pool_dollars
 
-    # Floor: $1 per rostered slot (active + effective bench — IL excluded)
-    hitter_floor = config.effective_total_hitter_slots
-    pitcher_floor = config.effective_total_pitcher_slots
-
-    hitter_marginal = max(hitter_pool - hitter_floor, 0.0)
-    pitcher_marginal = max(pitcher_pool - pitcher_floor, 0.0)
-
-    logger.info(
-        "Dollar pools — hitters: $%.0f (floor $%d, marginal $%.0f) | "
-        "pitchers: $%.0f (floor $%d, marginal $%.0f)",
-        hitter_pool, hitter_floor, hitter_marginal,
-        pitcher_pool, pitcher_floor, pitcher_marginal,
-    )
+    hitter_slots = hitter_slots_override if hitter_slots_override is not None else config.effective_total_hitter_slots
+    pitcher_slots = pitcher_slots_override if pitcher_slots_override is not None else config.effective_total_pitcher_slots
 
     proj_by_id = {p.fg_id: p for p in projections}
 
-    # Build initial PlayerValue objects with total SGP
+    # Build PlayerValue objects
     player_values: list[PlayerValue] = []
     for proj in projections:
         cat_sgp = category_sgp_map.get(proj.fg_id, {})
@@ -108,21 +102,40 @@ def compute_dollar_values(
                 consensus_stats=proj.stats.copy(),
                 category_sgp=cat_sgp,
                 total_sgp=total_sgp,
-                dollar_value=0.0,   # below-replacement players stay at $0
+                dollar_value=0.0,
                 assigned_position=assigned_pos,
                 sources_available=list(proj.sources_available),
             )
         )
 
-    # Separate into pools — include bench players (positive SGP means rostered)
-    rostered_hitters = [
-        pv for pv in player_values
-        if pv.player_type == "hitter" and pv.total_sgp > 0
-    ]
-    rostered_pitchers = [
-        pv for pv in player_values
-        if pv.player_type == "pitcher" and pv.total_sgp > 0
-    ]
+    # Cap each pool to the number of auctionable slots, sorted by SGP descending.
+    # This ensures total_distributed = slots × $1 + marginal = pool exactly.
+    # Players outside the cap receive $0 — they would not be drafted at auction.
+    positive_hitters = sorted(
+        [pv for pv in player_values if pv.player_type == "hitter" and pv.total_sgp > 0],
+        key=lambda pv: pv.total_sgp, reverse=True,
+    )
+    positive_pitchers = sorted(
+        [pv for pv in player_values if pv.player_type == "pitcher" and pv.total_sgp > 0],
+        key=lambda pv: pv.total_sgp, reverse=True,
+    )
+
+    rostered_hitters = positive_hitters[:hitter_slots]
+    rostered_pitchers = positive_pitchers[:pitcher_slots]
+
+    # Floor = actual number of capped players (may be < slots if pool is shallow)
+    hitter_floor = len(rostered_hitters)
+    pitcher_floor = len(rostered_pitchers)
+
+    hitter_marginal = max(hitter_pool - hitter_floor, 0.0)
+    pitcher_marginal = max(pitcher_pool - pitcher_floor, 0.0)
+
+    logger.info(
+        "Dollar pools — hitters: $%.0f (%d slots, floor $%d, marginal $%.0f) | "
+        "pitchers: $%.0f (%d slots, floor $%d, marginal $%.0f)",
+        hitter_pool, hitter_slots, hitter_floor, hitter_marginal,
+        pitcher_pool, pitcher_slots, pitcher_floor, pitcher_marginal,
+    )
 
     _assign_dollars(rostered_hitters, hitter_marginal)
     _assign_dollars(rostered_pitchers, pitcher_marginal)
