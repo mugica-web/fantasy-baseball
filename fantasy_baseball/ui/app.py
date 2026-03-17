@@ -240,19 +240,39 @@ def _render_sgp_tab():
     # Replacement level
     if replacement:
         st.subheader("Replacement Level")
-        repl_rows = []
+        st.caption(
+            "The **pool-level row** is the actual baseline used in the SGP formula — "
+            "stats of the last-rostered player in the full pool (active + effective bench across all teams). "
+            "Per-position rows show the last player at each dedicated slot (display only)."
+        )
+
+        # Pool-level replacement — what the formula actually uses
+        def _fmt_repl(stat, val):
+            if stat in ("R", "HR", "RBI", "SB", "K", "W", "SV"):
+                return round(val, 1)
+            elif stat in ("OBP", "AVG", "ERA", "WHIP"):
+                return round(val, 3)
+            elif stat == "PA":
+                return round(val, 0)
+            elif stat == "IP":
+                return round(val, 1)
+            return round(val, 2)
+
+        hitter_row = {"Position": "🔵 Pool (used in formula)"}
+        for stat, val in replacement.hitter_replacement.items():
+            hitter_row[stat] = _fmt_repl(stat, val)
+
+        pitcher_row = {"Position": "🔴 Pool (used in formula)"}
+        for stat, val in replacement.pitcher_replacement.items():
+            pitcher_row[stat] = _fmt_repl(stat, val)
+
+        repl_rows = [hitter_row, pitcher_row]
         for pos, stats in replacement.by_position.items():
             row = {"Position": pos}
             for stat, val in stats.items():
-                if stat in ("R", "HR", "RBI", "SB", "K", "W", "SV"):
-                    row[stat] = round(val, 1)
-                elif stat in ("OBP", "AVG", "ERA", "WHIP"):
-                    row[stat] = round(val, 3)
-                elif stat == "PA":
-                    row[stat] = round(val, 0)
-                elif stat == "IP":
-                    row[stat] = round(val, 1)
+                row[stat] = _fmt_repl(stat, val)
             repl_rows.append(row)
+
         if repl_rows:
             st.dataframe(pd.DataFrame(repl_rows), use_container_width=True, hide_index=True)
 
