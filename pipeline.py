@@ -373,8 +373,7 @@ def _compute_full_sgp(
     total_sgp_by_id: dict[str, float] = {}
 
     for player in projections:
-        pos = position_by_id.get(player.fg_id)
-        cat_sgp = counting_stat_sgp(player, replacement, denominators, config, assigned_position=pos)
+        cat_sgp = counting_stat_sgp(player, replacement, denominators, config)
         rate_sgp = rate_stat_sgp(player, replacement, denominators, config)
         all_sgp = {**cat_sgp, **rate_sgp}
         category_sgp_by_id[player.fg_id] = all_sgp
