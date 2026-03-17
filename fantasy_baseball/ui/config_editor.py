@@ -123,7 +123,7 @@ def _render_form(cfg: LeagueConfig) -> LeagueConfig:
         name=name,
         num_teams=int(num_teams),
         budget=int(budget),
-        roster=RosterSlots(slots={k: int(v) for k, v in slots.items() if v > 0}),
+        roster=RosterSlots(slots={k: int(v) for k, v in slots.items() if v > 0}, il_slots=cfg.roster.il_slots),
         categories=ScoringCategories(
             hitting=hitting,
             pitching=pitching,
