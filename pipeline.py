@@ -229,6 +229,8 @@ def run_pipeline(inputs: PipelineInputs) -> PipelineResult:
     pitcher_pool_override = None
     hitter_slots_override = None
     pitcher_slots_override = None
+    hitter_active_override = None
+    pitcher_active_override = None
     preliminary_values = None  # only set when keepers are active
     pre_keeper_dollar_values = None  # only set when keepers are active
     pre_keeper_total_sgp = None      # only set when keepers are active
@@ -246,7 +248,15 @@ def run_pipeline(inputs: PipelineInputs) -> PipelineResult:
         pre_keeper_dollar_values = {pv.fg_id: pv.dollar_value for pv in preliminary_values}
         pre_keeper_total_sgp = {pv.fg_id: pv.total_sgp for pv in preliminary_values}
 
-        available_consensus, hitter_pool_override, pitcher_pool_override, hitter_slots_override, pitcher_slots_override = apply_keeper_adjustments(
+        (
+            available_consensus,
+            hitter_pool_override,
+            pitcher_pool_override,
+            hitter_slots_override,
+            pitcher_slots_override,
+            hitter_active_override,
+            pitcher_active_override,
+        ) = apply_keeper_adjustments(
             config=config,
             projections=consensus,
             player_values=preliminary_values,
@@ -276,6 +286,8 @@ def run_pipeline(inputs: PipelineInputs) -> PipelineResult:
             pitcher_pool_override=pitcher_pool_override,
             hitter_slots_override=hitter_slots_override,
             pitcher_slots_override=pitcher_slots_override,
+            hitter_active_override=hitter_active_override,
+            pitcher_active_override=pitcher_active_override,
         )
         keeper_fg_ids = {k.fg_id for k in inputs.confirmed_keepers}
         keeper_values = [pv for pv in preliminary_values if pv.fg_id in keeper_fg_ids]

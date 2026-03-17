@@ -3,18 +3,24 @@ Convert SGP values to auction dollar values.
 
 Algorithm:
   1. Split players into hitter and pitcher pools.
-  2. Assign a $1 minimum floor to every active roster slot (the minimum bid
-     any player can receive at auction). This floor is deducted from each pool
-     before proportional distribution.
-  3. Distribute the remaining pool dollars proportionally to players with
-     positive total SGP. Players with zero or negative SGP receive only $1.
-  4. Final dollar value = $1 + (player_sgp / sum_positive_pool_sgp) × remaining_pool
+  2. Include all rostered players (active + bench) sorted by SGP descending,
+     capped to effective_total slots.
+  3. Assign a participation weight to each player:
+       - Active-slot players (top active_slots by SGP): weight = 1.0
+       - Bench players: weight decays linearly from a type-specific maximum
+         down to a minimum as bench depth increases.
+         Pitchers decay from 0.65 → 0.20 (streamable by matchup).
+         Hitters decay from 0.40 → 0.05 (spot-starts / injury fill-ins).
+  4. Weighted floor = Σ weight_i  (replaces the old integer slot count)
+  5. Marginal pool = total_pool - weighted_floor
+  6. Each player's dollar value = weight_i + (sgp_i × weight_i / Σ(sgp_j × weight_j)) × marginal
+     This guarantees Σ dollar_values = total_pool exactly.
 
 When keepers are active, keeper salaries are subtracted from the pool and
 kept players are removed from the proportional calculation before calling
 this function (handled in keeper_logic.py).
 
-Dollar values are rounded to two decimal places. No player receives less than $1.
+Dollar values are rounded to two decimal places.
 """
 
 from __future__ import annotations
@@ -30,6 +36,12 @@ from ..data.schema import ConsensusProjection
 
 logger = logging.getLogger(__name__)
 
+# Bench participation rates: (top_of_bench, bottom_of_bench)
+# Represents expected fraction of a full-season stat contribution.
+# Pitchers are higher because they can be streamed by favourable matchup.
+_BENCH_PITCHER_UTILIZATION = (0.65, 0.20)
+_BENCH_HITTER_UTILIZATION  = (0.40, 0.05)
+
 
 @dataclass
 class PlayerValue:
@@ -42,7 +54,7 @@ class PlayerValue:
     consensus_stats: dict[str, float]
     category_sgp: dict[str, float]     # per-category SGP contribution
     total_sgp: float
-    dollar_value: float                # auction value ($1 minimum)
+    dollar_value: float                # auction value
     assigned_position: str             # which slot this player fills
     sources_available: list[str] = field(default_factory=list)
     keeper_status: KeeperStatus | None = None   # set by keeper_logic
@@ -64,25 +76,27 @@ def compute_dollar_values(
     pitcher_pool_override: float | None = None,
     hitter_slots_override: int | None = None,
     pitcher_slots_override: int | None = None,
+    hitter_active_override: int | None = None,
+    pitcher_active_override: int | None = None,
 ) -> list[PlayerValue]:
     """
     Convert per-player SGP contributions to auction dollar values.
 
-    category_sgp_map     : {fg_id: {category: sgp}} from the SGP calculation pass
-    position_assignments : {fg_id: assigned_position} from replacement level
-    hitter_pool_override : use when keeper salaries have been subtracted (keeper mode)
-    pitcher_pool_override: same for pitchers
-    hitter_slots_override: remaining hitter auction slots after keeper slots are filled;
-                           caps the positive-SGP pool so total distributed = pool exactly
-    pitcher_slots_override: same for pitchers
+    hitter_slots_override  : total pool cap (active + bench - keepers) in keeper mode
+    pitcher_slots_override : same for pitchers
+    hitter_active_override : active/bench boundary in keeper mode
+    pitcher_active_override: same for pitchers
     """
     hitter_pool = hitter_pool_override if hitter_pool_override is not None else config.hitter_pool_dollars
     pitcher_pool = pitcher_pool_override if pitcher_pool_override is not None else config.pitcher_pool_dollars
 
-    hitter_slots = hitter_slots_override if hitter_slots_override is not None else config.active_hitter_slots
-    pitcher_slots = pitcher_slots_override if pitcher_slots_override is not None else config.active_pitcher_slots
+    # Total players eligible for dollar distribution (active + bench)
+    hitter_slots = hitter_slots_override if hitter_slots_override is not None else config.effective_total_hitter_slots
+    pitcher_slots = pitcher_slots_override if pitcher_slots_override is not None else config.effective_total_pitcher_slots
 
-    proj_by_id = {p.fg_id: p for p in projections}
+    # Active/bench boundary — bench players receive discounted participation weights
+    hitter_active = hitter_active_override if hitter_active_override is not None else config.active_hitter_slots
+    pitcher_active = pitcher_active_override if pitcher_active_override is not None else config.active_pitcher_slots
 
     # Build PlayerValue objects
     player_values: list[PlayerValue] = []
@@ -108,57 +122,87 @@ def compute_dollar_values(
             )
         )
 
-    # Cap each pool to the number of auctionable slots, sorted by SGP descending.
-    # This ensures total_distributed = slots × $1 + marginal = pool exactly.
-    # Players outside the cap receive $0 — they would not be drafted at auction.
+    # Sort by SGP descending, cap to total slots
     positive_hitters = sorted(
         [pv for pv in player_values if pv.player_type == "hitter" and pv.total_sgp > 0],
         key=lambda pv: pv.total_sgp, reverse=True,
-    )
+    )[:hitter_slots]
+
     positive_pitchers = sorted(
         [pv for pv in player_values if pv.player_type == "pitcher" and pv.total_sgp > 0],
         key=lambda pv: pv.total_sgp, reverse=True,
-    )
+    )[:pitcher_slots]
 
-    rostered_hitters = positive_hitters[:hitter_slots]
-    rostered_pitchers = positive_pitchers[:pitcher_slots]
+    hitter_weights = _participation_weights(positive_hitters, hitter_active)
+    pitcher_weights = _participation_weights(positive_pitchers, pitcher_active)
 
-    # Floor = actual number of capped players (may be < slots if pool is shallow)
-    hitter_floor = len(rostered_hitters)
-    pitcher_floor = len(rostered_pitchers)
+    hitter_floor = sum(hitter_weights[pv.fg_id] for pv in positive_hitters)
+    pitcher_floor = sum(pitcher_weights[pv.fg_id] for pv in positive_pitchers)
 
     hitter_marginal = max(hitter_pool - hitter_floor, 0.0)
     pitcher_marginal = max(pitcher_pool - pitcher_floor, 0.0)
 
     logger.info(
-        "Dollar pools — hitters: $%.0f (%d slots, floor $%d, marginal $%.0f) | "
-        "pitchers: $%.0f (%d slots, floor $%d, marginal $%.0f)",
-        hitter_pool, hitter_slots, hitter_floor, hitter_marginal,
-        pitcher_pool, pitcher_slots, pitcher_floor, pitcher_marginal,
+        "Dollar pools — hitters: $%.0f (%d total / %d active, floor $%.1f, marginal $%.0f) | "
+        "pitchers: $%.0f (%d total / %d active, floor $%.1f, marginal $%.0f)",
+        hitter_pool, len(positive_hitters), hitter_active, hitter_floor, hitter_marginal,
+        pitcher_pool, len(positive_pitchers), pitcher_active, pitcher_floor, pitcher_marginal,
     )
 
-    _assign_dollars(rostered_hitters, hitter_marginal)
-    _assign_dollars(rostered_pitchers, pitcher_marginal)
+    _assign_dollars(positive_hitters, hitter_marginal, hitter_weights)
+    _assign_dollars(positive_pitchers, pitcher_marginal, pitcher_weights)
 
     return sorted(player_values, key=lambda pv: (pv.dollar_value, pv.total_sgp), reverse=True)
+
+
+def _participation_weights(
+    rostered_players: list[PlayerValue],
+    active_cutoff: int,
+) -> dict[str, float]:
+    """
+    Compute participation weights for a sorted (best→worst) player list.
+
+    Active players (rank < active_cutoff) get weight 1.0.
+    Bench players get a linearly decaying weight based on depth and type.
+    """
+    bench_players = rostered_players[active_cutoff:]
+    bench_size = len(bench_players)
+
+    weights: dict[str, float] = {}
+    for rank, pv in enumerate(rostered_players):
+        if rank < active_cutoff:
+            weights[pv.fg_id] = 1.0
+        else:
+            bench_rank = rank - active_cutoff
+            top, bottom = (
+                _BENCH_PITCHER_UTILIZATION if pv.player_type == "pitcher"
+                else _BENCH_HITTER_UTILIZATION
+            )
+            frac = bench_rank / max(bench_size - 1, 1)  # 0.0 → 1.0 across bench depth
+            weights[pv.fg_id] = round(top + frac * (bottom - top), 4)
+
+    return weights
 
 
 def _assign_dollars(
     rostered_players: list[PlayerValue],
     marginal_pool: float,
+    weights: dict[str, float],
 ) -> None:
     """
-    Assign dollar values in-place for a pool of players.
+    Assign dollar values in-place.
 
-    Players with positive SGP share the marginal pool proportionally.
-    Players at or below zero SGP receive only the $1 floor (already set).
+    dollar_value_i = weight_i + (sgp_i × weight_i / Σ(sgp_j × weight_j)) × marginal_pool
+
+    This guarantees Σ dollar_values = Σ weights + marginal_pool = total_pool.
     """
     positive = [pv for pv in rostered_players if pv.total_sgp > 0]
-    total_positive_sgp = sum(pv.total_sgp for pv in positive)
+    total_weighted_sgp = sum(pv.total_sgp * weights.get(pv.fg_id, 1.0) for pv in positive)
 
-    if total_positive_sgp == 0:
-        return  # all players at floor — nothing to distribute
+    if total_weighted_sgp == 0:
+        return
 
     for pv in positive:
-        share = (pv.total_sgp / total_positive_sgp) * marginal_pool
-        pv.dollar_value = round(1.0 + share, 2)
+        w = weights.get(pv.fg_id, 1.0)
+        share = (pv.total_sgp * w / total_weighted_sgp) * marginal_pool
+        pv.dollar_value = round(w + share, 2)

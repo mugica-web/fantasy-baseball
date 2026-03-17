@@ -275,17 +275,29 @@ def apply_keeper_adjustments(
     adjusted_hitter_pool = config.hitter_pool_dollars - hitter_keeper_spend
     adjusted_pitcher_pool = config.pitcher_pool_dollars - pitcher_keeper_spend
 
-    # Remaining auction slots: keeper slots are filled; only unfilled slots are auctioned.
-    # Passed to compute_dollar_values so the floor and player cap are both correct.
-    hitter_slots_remaining = config.active_hitter_slots - num_hitter_keepers
-    pitcher_slots_remaining = config.active_pitcher_slots - num_pitcher_keepers
+    # Pool cap: total effective slots minus keepers (active + bench, IL excluded).
+    hitter_effective_remaining = config.effective_total_hitter_slots - num_hitter_keepers
+    pitcher_effective_remaining = config.effective_total_pitcher_slots - num_pitcher_keepers
+
+    # Active/bench boundary: only active slots minus keepers.
+    # Bench players in the remaining pool still get discounted participation weights.
+    hitter_active_remaining = config.active_hitter_slots - num_hitter_keepers
+    pitcher_active_remaining = config.active_pitcher_slots - num_pitcher_keepers
 
     logger.info(
-        "Keepers: %d players removed. Hitter pool: $%.0f → $%.0f (%d slots). "
-        "Pitcher pool: $%.0f → $%.0f (%d slots)",
+        "Keepers: %d players removed. Hitter pool: $%.0f → $%.0f (%d effective / %d active slots). "
+        "Pitcher pool: $%.0f → $%.0f (%d effective / %d active slots)",
         len(keeper_ids),
-        config.hitter_pool_dollars, adjusted_hitter_pool, hitter_slots_remaining,
-        config.pitcher_pool_dollars, adjusted_pitcher_pool, pitcher_slots_remaining,
+        config.hitter_pool_dollars, adjusted_hitter_pool, hitter_effective_remaining, hitter_active_remaining,
+        config.pitcher_pool_dollars, adjusted_pitcher_pool, pitcher_effective_remaining, pitcher_active_remaining,
     )
 
-    return available, adjusted_hitter_pool, adjusted_pitcher_pool, hitter_slots_remaining, pitcher_slots_remaining
+    return (
+        available,
+        adjusted_hitter_pool,
+        adjusted_pitcher_pool,
+        hitter_effective_remaining,
+        pitcher_effective_remaining,
+        hitter_active_remaining,
+        pitcher_active_remaining,
+    )
