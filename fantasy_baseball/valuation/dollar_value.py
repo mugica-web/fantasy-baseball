@@ -79,8 +79,8 @@ def compute_dollar_values(
     hitter_pool = hitter_pool_override if hitter_pool_override is not None else config.hitter_pool_dollars
     pitcher_pool = pitcher_pool_override if pitcher_pool_override is not None else config.pitcher_pool_dollars
 
-    hitter_slots = hitter_slots_override if hitter_slots_override is not None else config.effective_total_hitter_slots
-    pitcher_slots = pitcher_slots_override if pitcher_slots_override is not None else config.effective_total_pitcher_slots
+    hitter_slots = hitter_slots_override if hitter_slots_override is not None else config.active_hitter_slots
+    pitcher_slots = pitcher_slots_override if pitcher_slots_override is not None else config.active_pitcher_slots
 
     proj_by_id = {p.fg_id: p for p in projections}
 

@@ -28,7 +28,7 @@ CNMFBL_CONFIG = LeagueConfig(
             "P": 2,
             "BN": 7,
         },
-        il_slots=7,  # exclude all bench from replacement level — active slots only anchor replacement
+        il_slots=0,  # IL is a separate roster in CNMFBL; all 7 BN slots are real bench
     ),
     categories=ScoringCategories(
         hitting=["R", "HR", "RBI", "SB", "OBP"],

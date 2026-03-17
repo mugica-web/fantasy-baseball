@@ -202,3 +202,13 @@ class LeagueConfig:
     def effective_total_pitcher_slots(self) -> int:
         """Total pitcher slots for valuation — IL excluded from bench count."""
         return self.num_teams * self.roster.effective_total_pitcher_slots
+
+    @property
+    def active_hitter_slots(self) -> int:
+        """Active hitter slots only (no bench) across all teams — used for dollar distribution."""
+        return self.num_teams * self.roster.active_hitter_slots
+
+    @property
+    def active_pitcher_slots(self) -> int:
+        """Active pitcher slots only (no bench) across all teams — used for dollar distribution."""
+        return self.num_teams * self.roster.active_pitcher_slots

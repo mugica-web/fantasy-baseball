@@ -277,8 +277,8 @@ def apply_keeper_adjustments(
 
     # Remaining auction slots: keeper slots are filled; only unfilled slots are auctioned.
     # Passed to compute_dollar_values so the floor and player cap are both correct.
-    hitter_slots_remaining = config.effective_total_hitter_slots - num_hitter_keepers
-    pitcher_slots_remaining = config.effective_total_pitcher_slots - num_pitcher_keepers
+    hitter_slots_remaining = config.active_hitter_slots - num_hitter_keepers
+    pitcher_slots_remaining = config.active_pitcher_slots - num_pitcher_keepers
 
     logger.info(
         "Keepers: %d players removed. Hitter pool: $%.0f → $%.0f (%d slots). "
