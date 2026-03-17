@@ -24,6 +24,8 @@ from .upload_handler import (
     render_pecota_upload,
     render_keeper_input,
     render_sgp_override_form,
+    load_settings_cache,
+    save_settings_cache,
 )
 from .results_table import render_results_table
 from .live_draft import render_live_draft_tab
@@ -141,6 +143,8 @@ def _render_setup_tab(config):
 
     # Player pool size
     st.subheader("Player Pool Size")
+    if "player_limit" not in st.session_state:
+        st.session_state["player_limit"] = load_settings_cache().get("player_limit", 500)
     player_limit = st.number_input(
         "Max players to evaluate",
         min_value=50,
@@ -152,6 +156,7 @@ def _render_setup_tab(config):
         key="player_limit_input",
     )
     st.session_state["player_limit"] = player_limit
+    save_settings_cache({"player_limit": player_limit})
 
     # Run button
     if st.button("🚀 Calculate Player Values", type="primary", use_container_width=True):

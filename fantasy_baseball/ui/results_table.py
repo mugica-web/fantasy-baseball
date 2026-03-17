@@ -50,7 +50,7 @@ def render_results_table(
     )
 
     st.subheader(f"Player Values — {config.name}")
-    _render_summary_metrics(player_values, config, live_draft_enabled, live_drafted_ids)
+    _render_summary_metrics(player_values, config, live_draft_enabled, live_drafted_ids, pre_keeper_total_sgp)
     filtered_df = _render_filters(df, config, live_draft_enabled, has_keepers, live_drafted_ids)
     _render_table(filtered_df, config, live_draft_enabled, has_keepers, live_dollar_values is not None)
     _render_download_button(filtered_df)
@@ -149,6 +149,7 @@ def _render_summary_metrics(
     config: LeagueConfig,
     live_draft_enabled: bool = False,
     live_drafted_ids: set[str] | None = None,
+    pre_keeper_total_sgp: dict[str, float] | None = None,
 ) -> None:
     """Show high-level summary stats above the table."""
     drafted_ids = live_drafted_ids or set()
@@ -188,6 +189,74 @@ def _render_summary_metrics(
         c4.metric("Rostered hitters", f"{hitters} / {config.total_hitter_slots}")
         c5.metric("Rostered pitchers", f"{pitchers} / {config.total_pitcher_slots}")
         c6.metric("Available $", f"${available_dollars:,.0f}")
+
+    # SGP pool diagnostics — always shown once the pipeline has run
+    hitter_slots = config.effective_total_hitter_slots
+    pitcher_slots = config.effective_total_pitcher_slots
+
+    num_hitter_keepers = sum(
+        1 for pv in player_values
+        if pv.keeper_status is not None and pv.keeper_status.is_confirmed_keeper
+        and pv.player_type == "hitter"
+    )
+    num_pitcher_keepers = sum(
+        1 for pv in player_values
+        if pv.keeper_status is not None and pv.keeper_status.is_confirmed_keeper
+        and pv.player_type == "pitcher"
+    )
+    remaining_hitter_slots = max(hitter_slots - num_hitter_keepers, 0)
+    remaining_pitcher_slots = max(pitcher_slots - num_pitcher_keepers, 0)
+
+    # Current auction pool SGP (available players, capped to remaining slots)
+    cur_h_sgp = sum(
+        v for v in sorted(
+            [pv.total_sgp for pv in player_values if pv.player_type == "hitter" and pv.is_available],
+            reverse=True,
+        )[:remaining_hitter_slots]
+        if v > 0
+    )
+    cur_p_sgp = sum(
+        v for v in sorted(
+            [pv.total_sgp for pv in player_values if pv.player_type == "pitcher" and pv.is_available],
+            reverse=True,
+        )[:remaining_pitcher_slots]
+        if v > 0
+    )
+
+    with st.expander("SGP Pool Diagnostics (denominator used for $ distribution)"):
+        if pre_keeper_total_sgp is not None:
+            # Pre-keeper: top hitter_slots hitters by pre-keeper SGP across all players
+            pre_h_sgp = sum(
+                v for v in sorted(
+                    [pre_keeper_total_sgp.get(pv.fg_id, 0.0) for pv in player_values if pv.player_type == "hitter"],
+                    reverse=True,
+                )[:hitter_slots]
+                if v > 0
+            )
+            pre_p_sgp = sum(
+                v for v in sorted(
+                    [pre_keeper_total_sgp.get(pv.fg_id, 0.0) for pv in player_values if pv.player_type == "pitcher"],
+                    reverse=True,
+                )[:pitcher_slots]
+                if v > 0
+            )
+            d1, d2, d3, d4 = st.columns(4)
+            d1.metric(f"Pre-Keeper Hitter SGP ({hitter_slots} slots)", f"{pre_h_sgp:.1f}")
+            d2.metric(
+                f"Auction Hitter SGP ({remaining_hitter_slots} slots)",
+                f"{cur_h_sgp:.1f}",
+                delta=f"{cur_h_sgp - pre_h_sgp:+.1f}",
+            )
+            d3.metric(f"Pre-Keeper Pitcher SGP ({pitcher_slots} slots)", f"{pre_p_sgp:.1f}")
+            d4.metric(
+                f"Auction Pitcher SGP ({remaining_pitcher_slots} slots)",
+                f"{cur_p_sgp:.1f}",
+                delta=f"{cur_p_sgp - pre_p_sgp:+.1f}",
+            )
+        else:
+            d1, d2 = st.columns(2)
+            d1.metric(f"Hitter SGP in pool ({remaining_hitter_slots} slots)", f"{cur_h_sgp:.1f}")
+            d2.metric(f"Pitcher SGP in pool ({remaining_pitcher_slots} slots)", f"{cur_p_sgp:.1f}")
 
 
 def _render_filters(

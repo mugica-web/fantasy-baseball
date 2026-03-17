@@ -21,6 +21,8 @@ import streamlit as st
 from ..valuation.keeper_logic import KeeperMode, KeeperEntry
 
 _KEEPERS_CACHE_FILE = os.path.join(os.path.dirname(__file__), "..", "..", "keepers_cache.json")
+_STANDINGS_CACHE_FILE = os.path.join(os.path.dirname(__file__), "..", "..", "standings_cache.csv")
+_SETTINGS_CACHE_FILE = os.path.join(os.path.dirname(__file__), "..", "..", "settings_cache.json")
 
 
 def _load_keeper_cache() -> list[dict] | None:
@@ -39,6 +41,22 @@ def _save_keeper_cache(rows: list[dict]) -> None:
         pass
 
 
+def load_settings_cache() -> dict:
+    try:
+        with open(_SETTINGS_CACHE_FILE) as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def save_settings_cache(settings: dict) -> None:
+    try:
+        with open(_SETTINGS_CACHE_FILE, "w") as f:
+            json.dump(settings, f)
+    except Exception:
+        pass
+
+
 def render_standings_upload() -> pd.DataFrame | None:
     """
     Render the historical standings uploader.
@@ -48,6 +66,7 @@ def render_standings_upload() -> pd.DataFrame | None:
       (columns must match the league's scoring categories; Team column optional)
 
     Returns a DataFrame if uploaded and valid, otherwise None.
+    Persists the last uploaded file to disk so it survives page reloads.
     """
     st.subheader("Historical Standings (Recommended)")
     st.caption(
@@ -63,25 +82,46 @@ def render_standings_upload() -> pd.DataFrame | None:
         help="e.g. 3-5 years of final standings exported from your league platform",
     )
 
-    if uploaded is None:
-        st.info(
-            "No standings uploaded — generic default denominators will be used. "
-            "Values will be less accurate without your league's historical data."
-        )
-        return None
-
-    try:
-        df = pd.read_csv(uploaded)
-        if "season" not in df.columns:
-            st.error("Standings CSV must include a `season` column.")
+    if uploaded is not None:
+        try:
+            df = pd.read_csv(uploaded)
+            if "season" not in df.columns:
+                st.error("Standings CSV must include a `season` column.")
+                return None
+            df.to_csv(_STANDINGS_CACHE_FILE, index=False)
+            st.success(f"Loaded standings: {len(df)} rows across {df['season'].nunique()} season(s).")
+            with st.expander("Preview standings data"):
+                st.dataframe(df.head(20), use_container_width=True)
+            return df
+        except Exception as e:
+            st.error(f"Error reading standings CSV: {e}")
             return None
-        st.success(f"Loaded standings: {len(df)} rows across {df['season'].nunique()} season(s).")
-        with st.expander("Preview standings data"):
-            st.dataframe(df.head(20), use_container_width=True)
-        return df
-    except Exception as e:
-        st.error(f"Error reading standings CSV: {e}")
-        return None
+
+    # No file in this session — check disk cache
+    if os.path.exists(_STANDINGS_CACHE_FILE):
+        try:
+            df = pd.read_csv(_STANDINGS_CACHE_FILE)
+            col1, col2 = st.columns([4, 1])
+            with col1:
+                st.success(
+                    f"Using cached standings: {len(df)} rows across "
+                    f"{df['season'].nunique()} season(s). (Upload a new file to replace.)"
+                )
+            with col2:
+                if st.button("Clear", key="clear_standings_cache", help="Remove cached standings"):
+                    os.remove(_STANDINGS_CACHE_FILE)
+                    st.rerun()
+            with st.expander("Preview standings data"):
+                st.dataframe(df.head(20), use_container_width=True)
+            return df
+        except Exception:
+            pass
+
+    st.info(
+        "No standings uploaded — generic default denominators will be used. "
+        "Values will be less accurate without your league's historical data."
+    )
+    return None
 
 
 def render_pecota_upload() -> tuple[str | None, str | None]:

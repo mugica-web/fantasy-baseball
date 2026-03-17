@@ -20,8 +20,10 @@ env/
 # Temp files from PECOTA / prior-year uploads (written to system temp, but just in case)
 *.tmp
 
-# Keeper cache — local user data, not part of the codebase
+# Local user data caches — not part of the codebase
 keepers_cache.json
+standings_cache.csv
+settings_cache.json
 
 # OS
 .DS_Store
