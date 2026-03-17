@@ -167,33 +167,8 @@ def _render_summary_metrics(
     )
     available_dollars = total_budget - keeper_spend
 
-    if live_draft_enabled and drafted_ids:
-        # Show remaining pool from session state (more accurate — uses actual prices)
-        picks = st.session_state.get("draft_picks", [])
-        total_draft_spent = sum(p["price"] for p in picks)
-        remaining_dollars = available_dollars - total_draft_spent
-        drafted_count = len(drafted_ids)
-        cols = st.columns(7)
-        cols[0].metric("Total players", total_players)
-        cols[1].metric("Available", available - drafted_count)
-        cols[2].metric("Kept", kept)
-        cols[3].metric("Drafted", drafted_count)
-        cols[4].metric("Rostered hitters", f"{hitters} / {config.total_hitter_slots}")
-        cols[5].metric("Rostered pitchers", f"{pitchers} / {config.total_pitcher_slots}")
-        cols[6].metric("Remaining $", f"${remaining_dollars:,.0f}")
-    else:
-        c1, c2, c3, c4, c5, c6 = st.columns(6)
-        c1.metric("Total players", total_players)
-        c2.metric("Available", available)
-        c3.metric("Kept", kept)
-        c4.metric("Rostered hitters", f"{hitters} / {config.total_hitter_slots}")
-        c5.metric("Rostered pitchers", f"{pitchers} / {config.total_pitcher_slots}")
-        c6.metric("Available $", f"${available_dollars:,.0f}")
-
-    # SGP pool diagnostics — always shown once the pipeline has run
     hitter_slots = config.effective_total_hitter_slots
     pitcher_slots = config.effective_total_pitcher_slots
-
     num_hitter_keepers = sum(
         1 for pv in player_values
         if pv.keeper_status is not None and pv.keeper_status.is_confirmed_keeper
@@ -206,6 +181,29 @@ def _render_summary_metrics(
     )
     remaining_hitter_slots = max(hitter_slots - num_hitter_keepers, 0)
     remaining_pitcher_slots = max(pitcher_slots - num_pitcher_keepers, 0)
+
+    if live_draft_enabled and drafted_ids:
+        # Show remaining pool from session state (more accurate — uses actual prices)
+        picks = st.session_state.get("draft_picks", [])
+        total_draft_spent = sum(p["price"] for p in picks)
+        remaining_dollars = available_dollars - total_draft_spent
+        drafted_count = len(drafted_ids)
+        cols = st.columns(7)
+        cols[0].metric("Total players", total_players)
+        cols[1].metric("Available", available - drafted_count)
+        cols[2].metric("Kept", kept)
+        cols[3].metric("Drafted", drafted_count)
+        cols[4].metric("Auction hitter slots", f"{hitters} / {remaining_hitter_slots}")
+        cols[5].metric("Auction pitcher slots", f"{pitchers} / {remaining_pitcher_slots}")
+        cols[6].metric("Remaining $", f"${remaining_dollars:,.0f}")
+    else:
+        c1, c2, c3, c4, c5, c6 = st.columns(6)
+        c1.metric("Total players", total_players)
+        c2.metric("Available", available)
+        c3.metric("Kept", kept)
+        c4.metric("Auction hitter slots", f"{hitters} / {remaining_hitter_slots}")
+        c5.metric("Auction pitcher slots", f"{pitchers} / {remaining_pitcher_slots}")
+        c6.metric("Available $", f"${available_dollars:,.0f}")
 
     # Current auction pool SGP (available players, capped to remaining slots)
     cur_h_sgp = sum(
