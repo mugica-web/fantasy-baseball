@@ -258,17 +258,17 @@ def _render_sgp_tab():
                 return round(val, 1)
             return round(val, 2)
 
-        hitter_row = {"Position": "🔵 Pool (used in formula)"}
+        hitter_row = {"Position": "🔵 Pool (used in formula)", "Player": replacement.hitter_replacement_name}
         for stat, val in replacement.hitter_replacement.items():
             hitter_row[stat] = _fmt_repl(stat, val)
 
-        pitcher_row = {"Position": "🔴 Pool (used in formula)"}
+        pitcher_row = {"Position": "🔴 Pool (used in formula)", "Player": replacement.pitcher_replacement_name}
         for stat, val in replacement.pitcher_replacement.items():
             pitcher_row[stat] = _fmt_repl(stat, val)
 
         repl_rows = [hitter_row, pitcher_row]
         for pos, stats in replacement.by_position.items():
-            row = {"Position": pos}
+            row = {"Position": pos, "Player": replacement.by_position_names.get(pos, "")}
             for stat, val in stats.items():
                 row[stat] = _fmt_repl(stat, val)
             repl_rows.append(row)

@@ -26,7 +26,7 @@ Pitchers follow the same pattern: SP slots filled first, then RP slots, then P f
 
 from __future__ import annotations
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 import numpy as np
@@ -73,6 +73,11 @@ class ReplacementLevel:
     team_ip: float              # total IP across all rostered pitcher slots (per team)
     team_era_er: float          # sum(ER) across all rostered pitchers (per team)
     team_whip_bb_h: float       # sum(BB + H) across all rostered pitchers (per team)
+
+    # Display-only: names of the replacement-level players
+    hitter_replacement_name: str = ""
+    pitcher_replacement_name: str = ""
+    by_position_names: dict[str, str] = field(default_factory=dict)
 
     @property
     def team_obp(self) -> float:
@@ -129,7 +134,8 @@ def compute_replacement_level(
         pitcher_rank, config
     )
 
-    by_position = {}
+    by_position: dict[str, dict[str, float]] = {}
+    by_position_names: dict[str, str] = {}
 
     # Replacement stats per hitter position (display/debugging only)
     for pos, assigned in position_assignments.items():
@@ -137,6 +143,7 @@ def compute_replacement_level(
             continue
         last_rostered = assigned[-1]  # worst player who made the roster
         by_position[pos] = last_rostered.stats.copy()
+        by_position_names[pos] = last_rostered.name
 
     # Replacement stats per pitcher position (display/debugging only)
     for pos, assigned in pitcher_assignments.items():
@@ -144,6 +151,7 @@ def compute_replacement_level(
             continue
         last_rostered = assigned[-1]
         by_position[pos] = last_rostered.stats.copy()
+        by_position_names[pos] = last_rostered.name
 
     # Phase 3: bench — extend the rostered pool by effective BN slots (IL excluded).
     # IL slots hold injured players who produce no stats and should not anchor
@@ -184,7 +192,9 @@ def compute_replacement_level(
 
     # Pool-level replacement: last-rostered player in the full pool (active + bench)
     hitter_replacement = all_rostered_hitters[-1].stats.copy() if all_rostered_hitters else {}
+    hitter_replacement_name = all_rostered_hitters[-1].name if all_rostered_hitters else ""
     pitcher_replacement = all_rostered_pitchers[-1].stats.copy() if all_rostered_pitchers else {}
+    pitcher_replacement_name = all_rostered_pitchers[-1].name if all_rostered_pitchers else ""
 
     logger.info(
         "Replacement level — team OBP: %.3f, team ERA: %.2f, team WHIP: %.3f",
@@ -197,6 +207,9 @@ def compute_replacement_level(
         hitter_replacement=hitter_replacement,
         pitcher_replacement=pitcher_replacement,
         by_position=by_position,
+        hitter_replacement_name=hitter_replacement_name,
+        pitcher_replacement_name=pitcher_replacement_name,
+        by_position_names=by_position_names,
         team_pa=team_pa,
         team_obp_numerator=team_obp_num,
         team_avg_numerator=team_avg_num,
